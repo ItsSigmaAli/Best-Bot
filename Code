@@ -1,0 +1,100 @@
+#!/usr/bin/env python3
+"""CLI chatbot with a curious, playful persona."""
+from __future__ import annotations
+
+import json
+import os
+import sys
+import textwrap
+import urllib.error
+import urllib.request
+
+
+DEFAULT_MODEL = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
+API_URL = os.environ.get("OPENAI_API_URL", "https://api.openai.com/v1/chat/completions")
+PROMPT_PATH = os.environ.get("BOT_PROMPT_PATH", "bot_prompt.md")
+
+
+def load_persona_prompt(path: str) -> str:
+    try:
+        with open(path, "r", encoding="utf-8") as prompt_file:
+            return prompt_file.read().strip()
+    except FileNotFoundError:
+        return "You are a curious, playful assistant who learns by doing and joking."
+
+
+def call_openai(messages: list[dict[str, str]], model: str) -> str:
+    api_key = os.environ.get("OPENAI_API_KEY")
+    if not api_key:
+        raise RuntimeError("Missing OPENAI_API_KEY in environment.")
+
+    payload = {
+        "model": model,
+        "messages": messages,
+        "temperature": 0.7,
+    }
+
+    request = urllib.request.Request(
+        API_URL,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
+    )
+
+    try:
+        with urllib.request.urlopen(request, timeout=60) as response:
+            data = json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        body = exc.read().decode("utf-8", errors="ignore")
+        raise RuntimeError(f"API error {exc.code}: {body}") from exc
+
+    return data["choices"][0]["message"]["content"].strip()
+
+
+def format_assistant_message(text: str) -> str:
+    return textwrap.fill(text, width=88)
+
+
+def main() -> int:
+    persona = load_persona_prompt(PROMPT_PATH)
+    messages: list[dict[str, str]] = [
+        {
+            "role": "system",
+            "content": persona,
+        }
+    ]
+
+    print("Curious Bot ready. Type 'exit' or 'quit' to stop.\n")
+
+    while True:
+        try:
+            user_input = input("You: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print("\nLater! ✌️")
+            return 0
+
+        if user_input.lower() in {"exit", "quit"}:
+            print("Later! ✌️")
+            return 0
+
+        if not user_input:
+            print("Bot: Give me something to poke at. 😄")
+            continue
+
+        messages.append({"role": "user", "content": user_input})
+
+        try:
+            reply = call_openai(messages, DEFAULT_MODEL)
+        except RuntimeError as exc:
+            print(f"Bot: {exc}")
+            print("Bot: Add your OPENAI_API_KEY and try again.")
+            return 1
+
+        messages.append({"role": "assistant", "content": reply})
+        print(f"Bot: {format_assistant_message(reply)}\n")
+
+
+if __name__ == "__main__":
+    sys.exit(main())
